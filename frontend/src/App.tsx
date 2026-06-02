@@ -6,8 +6,6 @@ import Search from "./components/Search";
 import Tags from "./components/Tags";
 import Alerts from "./components/Alerts";
 import { Leaf, LogIn } from "lucide-react";
-import { CONFIG } from "./config";
-
 function App() {
   const auth = useAuth();
 
