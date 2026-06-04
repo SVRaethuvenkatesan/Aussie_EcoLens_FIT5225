@@ -5,3 +5,4 @@ torch
 torchvision
 numpy
 megadetector
+google-cloud-storage

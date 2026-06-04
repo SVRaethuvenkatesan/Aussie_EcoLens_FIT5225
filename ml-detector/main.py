@@ -13,6 +13,9 @@ import torchvision.transforms as transforms
 # Import the MegaDetector routine
 from megadetector.detection import run_detector_batch
 
+# Google Cloud storage bucket
+from google.cloud import storage
+
 app = Flask(__name__)
 
 # ==============================================================================
@@ -28,6 +31,22 @@ print(f"--> Hosting inference runtime on architecture device: {DEVICE}")
 
 MD_MODEL_PATH = "./mdv5a.pt"
 SPECIES_MODEL_PATH = "./model.pt"
+BUCKET_NAME = "ecolens-model-weights"  # bucket containing the two .pt files
+
+def download_weight_file(blob_name, destination_path):
+    """Downloads a model weight file from GCS to the local container disk if not present."""
+    if not os.path.exists(destination_path):
+        print(f"--> Target {blob_name} missing locally. Downloading from GCS bucket {BUCKET_NAME}...")
+        client = storage.Client()
+        bucket = client.bucket(BUCKET_NAME)
+        blob = bucket.blob(blob_name)
+        blob.download_to_filename(destination_path)
+        print(f"--> Successfully downloaded {blob_name} to {destination_path}.")
+    else:
+        print(f"--> {blob_name} already exists locally. Skipping download.")
+
+download_weight_file("mdv5a.pt", MD_MODEL_PATH)
+download_weight_file("model.pt", SPECIES_MODEL_PATH)
 
 print("--> Initializing SpeciesNet Model...")
 species_model = torch.load(SPECIES_MODEL_PATH, map_location=DEVICE, weights_only=False)
