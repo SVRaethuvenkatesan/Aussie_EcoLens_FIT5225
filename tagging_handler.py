@@ -215,11 +215,23 @@ def lambda_handler(event, context):
 
     # ---- Notify only AFTER tags exist (a tag-based notification needs tags) ----
     try:
+        file_url = f"s3://{bucket}/{key}"
+
+        rest = key[len("uploads/"):] if key.startswith("uploads/") else key
+        root, _ = os.path.splitext(rest)
+        thumb_key = f"thumbnails/{root}.jpg"
+        thumbnail_url = f"s3://{bucket}/{thumb_key}" if file_type == "image" else "N/A"
+
         lam.invoke(
             FunctionName=NOTIFY_FUNCTION_NAME,
             InvocationType="Event",
-            # >>> ADJUST (notification payload): match notification-handler's input.
-            Payload=json.dumps({"file_id": file_id, "tags": tags}).encode("utf-8"),
+            Payload=json.dumps({
+                "action": "notify",
+                "file_id": file_id, 
+                "tags": tags,
+                "file_url": file_url,
+                "thumbnail_url": thumbnail_url
+            }).encode("utf-8"),
         )
     except Exception as exc:
         print(f"WARN: could not invoke {NOTIFY_FUNCTION_NAME}: {exc}")
