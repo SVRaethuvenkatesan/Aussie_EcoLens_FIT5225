@@ -45,12 +45,12 @@ const Alerts = () => {
       const result = await response.json();
       
       if (response.ok) {
-        setMessage({ type: 'success', text: '✅ Successfully subscribed! Please check your email to confirm the subscription.' });
+        setMessage({ type: 'success', text: 'Successfully subscribed! Please check your email to confirm the subscription.' });
       } else {
-        setMessage({ type: 'error', text: `❌ ${result.error || 'Failed to subscribe'}` });
+        setMessage({ type: 'error', text: `${result.error || 'Failed to subscribe'}` });
       }
     } catch (err: any) {
-      setMessage({ type: 'error', text: `❌ Error: ${err.message}` });
+      setMessage({ type: 'error', text: `Error: ${err.message}` });
     } finally {
       setIsSubscribing(false);
     }

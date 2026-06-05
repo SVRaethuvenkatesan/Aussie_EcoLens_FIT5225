@@ -1,8 +1,9 @@
 import json
 import boto3
+import os
 
 # CONFIGURATION
-AWS_REGION = "us-east-1"
+AWS_REGION = os.environ.get("REGION", "us-east-1")
 
 sns = boto3.client("sns", region_name=AWS_REGION)
 
@@ -96,6 +97,10 @@ def lambda_handler(event, context):
         if action == "subscribe":
             email = body.get("email", "")
             tags = body.get("tags", [])
+            species = body.get("species", "")
+
+            if species and not tags:
+                tags = [species]
 
             if not email or not tags:
                 return error_response("Email and tags are required")
@@ -107,7 +112,7 @@ def lambda_handler(event, context):
                 subscribed.append({"tag": tag, "topic_arn": topic_arn})
 
             return success_response({
-                "message": f"Subscribed {email} to {len(tags)} tag(s)",
+                "message": f"Confirmation email sent to {email}. Please click the link to confirm subscription.",
                 "subscriptions": subscribed
             })
 

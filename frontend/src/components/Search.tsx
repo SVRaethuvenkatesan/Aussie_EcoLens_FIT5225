@@ -6,6 +6,7 @@ import { CONFIG } from "../config";
 interface QueryResult {
   file_url: string;
   thumbnail_url?: string;
+  video_frames?: string[];
   file_type: 'image' | 'video';
 }
 
@@ -55,12 +56,13 @@ const Search = () => {
       
       if (!response.ok) throw new Error(data.error || 'Request failed');
       
-      if (path === '/query/thumbnail') {
-         if (data && data.file_url) setThumbnailResult(data.file_url);
+      if (path.includes('/query/thumbnail')) {
+         if (data?.data?.file_url) setThumbnailResult(data.data.file_url);
          else setMessage({ type: 'info', text: 'No matching full image found.' });
       } else {
-         if (data.results && data.results.length > 0) {
-           setResults(data.results);
+         const results = data?.data?.results || [];
+         if (results.length > 0) {
+           setResults(results);
          } else {
            setMessage({ type: 'info', text: 'No results found.' });
          }
@@ -311,28 +313,55 @@ const Search = () => {
                 className="hover:shadow-md"
                 >
                   {item.file_type === 'image' ? (
-                    <div onClick={() => setModalImage(item.file_url)}>
-                      <img 
-                        src={item.thumbnail_url || item.file_url} 
-                        alt="Wildlife" 
-                        style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }}
-                        onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/180x140?text=No+Thumbnail')}
-                      />
-                      <div className="p-2" style={{ padding: '0.75rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', borderTop: '1px solid var(--color-border)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px' }} />
-                        {item.file_url.split('/').pop()}
+                    <div>
+                      <div onClick={() => setModalImage(item.file_url)}>
+                        <img 
+                          src={item.thumbnail_url || item.file_url} 
+                          alt="Wildlife" 
+                          style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }}
+                          onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/180x140?text=No+Thumbnail')}
+                        />
+                      </div>
+                      <div className="p-2" style={{ padding: '0.75rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', borderTop: '1px solid var(--color-border)' }}>
+                        <details style={{ cursor: 'pointer' }}>
+                          <summary style={{ outline: 'none', fontWeight: 500 }}>
+                            <ImageIcon size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                            Original File URL
+                          </summary>
+                          <div style={{ marginTop: '0.5rem', wordBreak: 'break-all', fontSize: '0.7rem' }}>
+                            <a href={item.file_url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
+                              {item.file_url}
+                            </a>
+                          </div>
+                        </details>
                       </div>
                     </div>
                   ) : (
                     <div>
-                      <div style={{ width: '100%', height: '140px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: 'var(--color-text-muted)' }}>
-                        <Video size={32} />
-                        <span className="text-sm mt-2">Video File</span>
-                      </div>
+                      {item.video_frames && item.video_frames.length > 0 ? (
+                        <div style={{ width: '100%', height: '140px', background: '#f1f5f9', display: 'flex', overflowX: 'auto', gap: '4px', padding: '4px' }}>
+                           {item.video_frames.map((frame_url, i) => (
+                              <img key={i} src={frame_url} alt={`Frame ${i+1}`} style={{ height: '100%', objectFit: 'cover', borderRadius: '4px', cursor: 'pointer' }} onClick={() => setModalImage(frame_url)} />
+                           ))}
+                        </div>
+                      ) : (
+                        <div style={{ width: '100%', height: '140px', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: 'var(--color-text-muted)' }}>
+                          <Video size={32} />
+                          <span className="text-sm mt-2">Video File</span>
+                        </div>
+                      )}
                       <div className="p-2" style={{ padding: '0.75rem', fontSize: '0.75rem', color: 'var(--color-text-muted)', borderTop: '1px solid var(--color-border)' }}>
-                        <a href={item.file_url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <LinkIcon size={12} /> Watch Video
-                        </a>
+                        <details style={{ cursor: 'pointer' }}>
+                          <summary style={{ outline: 'none', fontWeight: 500 }}>
+                            <Video size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                            Original Video URL
+                          </summary>
+                          <div style={{ marginTop: '0.5rem', wordBreak: 'break-all', fontSize: '0.7rem' }}>
+                            <a href={item.file_url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'none' }}>
+                              {item.file_url}
+                            </a>
+                          </div>
+                        </details>
                       </div>
                     </div>
                   )}

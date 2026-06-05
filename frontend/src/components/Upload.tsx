@@ -65,14 +65,68 @@ const Upload = () => {
     });
   };
 
+  const compressImage = (f: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          const MAX_SIZE = 1920;
+          
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(toBase64(f));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(dataUrl.split(',')[1]);
+        };
+        img.onerror = () => resolve(toBase64(f));
+        if (event.target?.result) {
+          img.src = event.target.result as string;
+        } else {
+          reject(new Error("Failed to read file"));
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+  };
+
   const handleUpload = async () => {
     if (!file) return;
+
+    if (file.type.startsWith('video/') && file.size > 4.5 * 1024 * 1024) {
+      setStatus({ type: 'error', message: 'Video exceeds maximum allowed size of 4.5 MB.' });
+      return;
+    }
 
     setIsUploading(true);
     setStatus({ type: 'info', message: 'Uploading file to cloud storage...' });
 
     try {
-      const base64 = await toBase64(file);
+      const base64 = file.type.startsWith('image/') 
+        ? await compressImage(file) 
+        : await toBase64(file);
+
       const token = auth.user?.id_token || auth.user?.access_token;
 
       const response = await fetch(`${CONFIG.API_URL}/upload`, {
@@ -82,9 +136,9 @@ const Upload = () => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          file_content: base64,
-          file_name: file.name,
-          file_type: file.type,
+          file_base64: base64,
+          filename: file.name,
+          content_type: file.type,
           file_size: file.size
         })
       });
@@ -92,17 +146,17 @@ const Upload = () => {
       const result = await response.json();
 
       if (response.status === 409) {
-        setStatus({ type: 'error', message: '⚠️ Duplicate file! This file has already been uploaded.' });
+        setStatus({ type: 'error', message: 'Duplicate file! This file has already been uploaded.' });
       } else if (response.ok) {
-        setStatus({ type: 'success', message: '✅ Upload successful! The file is being processed.' });
+        setStatus({ type: 'success', message: 'Upload successful! The file is being processed.' });
         setFile(null);
         setPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
-        setStatus({ type: 'error', message: `❌ Upload failed: ${result.error || 'Unknown error'}` });
+        setStatus({ type: 'error', message: `Upload failed: ${result.error || 'Unknown error'}` });
       }
     } catch (err: any) {
-      setStatus({ type: 'error', message: `❌ Error: ${err.message}` });
+      setStatus({ type: 'error', message: `Error: ${err.message}` });
     } finally {
       setIsUploading(false);
     }

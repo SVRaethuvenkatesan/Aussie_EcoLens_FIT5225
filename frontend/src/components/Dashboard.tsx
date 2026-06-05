@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useAuth } from 'react-oidc-context';
 import Upload from './Upload';
 import Search from './Search';

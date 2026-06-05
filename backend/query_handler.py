@@ -2,16 +2,25 @@ import json
 import boto3
 import tempfile
 import os
-import requests
+import urllib.request
+import base64
+import decimal
 from boto3.dynamodb.conditions import Attr, Key
 
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return int(obj) if obj % 1 == 0 else float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
 # CONFIGURATION
-S3_BUCKET_NAME = "aussie-ecolens-bucket-sri"
-DYNAMODB_TABLE_NAME = "wildlife_files"
-AWS_REGION = "us-east-1"
+S3_BUCKET_NAME = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
+DYNAMODB_TABLE_NAME = os.environ.get('DYNAMODB_TABLE', 'wildlife_files')
+AWS_REGION = os.environ.get('REGION', 'us-east-1')
 UPLOADS_FOLDER = "uploads/"
 THUMBNAILS_FOLDER = "thumbnails/"
-GCP_ML_FUNCTION_URL = "https://your-gcp-function-url"  # Update GCP 
+GCP_ML_FUNCTION_URL = os.environ.get('GCP_FUNCTION_URL', 'https://ml-detector-562419717393.us-central1.run.app')
+GCP_SECRET_KEY = os.environ.get('GCP_SECRET_KEY', 'aussie-ecolens-2026')
 
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -28,7 +37,7 @@ def success_response(data, status_code=200):
     return {
         "statusCode": status_code,
         "headers": CORS_HEADERS,
-        "body": json.dumps({"success": True, "data": data})
+        "body": json.dumps({"success": True, "data": data}, cls=DecimalEncoder)
     }
 
 def error_response(message, status_code=400):
@@ -38,24 +47,63 @@ def error_response(message, status_code=400):
         "body": json.dumps({"success": False, "error": message})
     }
 
-def format_result(item):
-    """
-    Images → return thumbnail URL
-    Videos → return full file URL
-    """
-    file_type = item.get("file_type", "").lower()
-    is_video = file_type in ["mp4", "avi", "mov", "mkv", "video"]
+def _get_claims(event):
+    try:
+        claims = event.get("requestContext", {}).get("authorizer", {}).get("claims", {})
+        return claims.get("sub"), claims.get("email")
+    except (KeyError, TypeError, AttributeError):
+        return None, None
 
+
+def get_presigned_url(s3_key, bucket):
+    if not s3_key:
+        return ""
+    if s3_key.startswith('s3://'):
+        key = s3_key.replace(f's3://{bucket}/', '')
+    else:
+        key = s3_key
+    
+    return s3.generate_presigned_url(
+        'get_object',
+        Params={
+            'Bucket': bucket,
+            'Key': key
+        },
+        ExpiresIn=3600
+    )
+
+def format_result(item):
+    bucket = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
+    file_type = item.get("file_type", "").lower()
+    is_video = file_type == "video"
+    
+    url = get_presigned_url(item.get("file_url"), bucket) if is_video else get_presigned_url(item.get("thumbnail_url"), bucket)
+    
+    video_frames_presigned = []
+    if is_video and "video_frames" in item:
+        for vf in item["video_frames"]:
+            video_frames_presigned.append(get_presigned_url(vf, bucket))
+    
     return {
-        "url": item.get("file_url") if is_video else item.get("thumbnail_url"),
-        "file_url": item.get("file_url"),
-        "thumbnail_url": item.get("thumbnail_url"),
+        "url": url,
+        "file_url": get_presigned_url(item.get("file_url"), bucket),
+        "thumbnail_url": get_presigned_url(item.get("thumbnail_url"), bucket),
+        "video_frames": video_frames_presigned,
         "file_type": file_type,
         "tags": item.get("tags", {}),
         "is_video": is_video,
         "original_name": item.get("original_name", ""),
         "uploaded_at": item.get("uploaded_at", "")
     }
+
+def scan_all():
+    items = []
+    response = table.scan()
+    items.extend(response.get("Items", []))
+    while "LastEvaluatedKey" in response:
+        response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+        items.extend(response.get("Items", []))
+    return items
 
 # ================================================
 # QUERY TYPE 1: Find by tags with minimum counts
@@ -64,8 +112,7 @@ def format_result(item):
 # ================================================
 def query_by_tags(tag_counts):
     try:
-        response = table.scan()
-        items = response.get("Items", [])
+        items = scan_all()
 
         matching = []
         for item in items:
@@ -88,8 +135,7 @@ def query_by_tags(tag_counts):
 # {"species": "dingo"}
 def query_by_species(species):
     try:
-        response = table.scan()
-        items = response.get("Items", [])
+        items = scan_all()
 
         matching = []
         for item in items:
@@ -117,9 +163,10 @@ def query_by_thumbnail_url(thumbnail_url):
             return error_response("No file found for this thumbnail URL", 404)
 
         item = items[0]
+        bucket = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
         return success_response({
-            "file_url": item.get("file_url"),
-            "thumbnail_url": item.get("thumbnail_url"),
+            "file_url": get_presigned_url(item.get("file_url"), bucket),
+            "thumbnail_url": get_presigned_url(item.get("thumbnail_url"), bucket),
             "file_type": item.get("file_type"),
             "tags": item.get("tags", {}),
             "original_name": item.get("original_name", "")
@@ -170,20 +217,43 @@ def detect_tags_from_file(file_content, file_name):
     is_video = file_ext in [".mp4", ".avi", ".mov", ".mkv"]
     all_tags = {}
 
+    def call_gcp(img_bytes, fname):
+        if not GCP_ML_FUNCTION_URL:
+            return {}
+            
+        import hmac
+        import hashlib
+        import time
+        timestamp = int(time.time())
+        token = hmac.new(
+            GCP_SECRET_KEY.encode(),
+            str(timestamp).encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        try:
+            body = json.dumps({
+                "filename": fname,
+                "image_data": base64.b64encode(img_bytes).decode("utf-8"),
+                "secret_key": token,
+                "timestamp": timestamp
+            }).encode("utf-8")
+            req = urllib.request.Request(GCP_ML_FUNCTION_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=120) as r:
+                data = json.loads(r.read().decode())
+            return data.get("tags", {})
+        except Exception as e:
+            print(f"GCP error: {e}")
+            return {}
+
     if is_video:
         frames = extract_video_frames(file_content, file_name)
         for i, frame in enumerate(frames):
-            files = {"file": (f"frame_{i}.jpg", frame, "image/jpeg")}
-            gcp_response = requests.post(GCP_ML_FUNCTION_URL, files=files, timeout=30)
-            if gcp_response.status_code == 200:
-                frame_tags = gcp_response.json().get("tags", {})
-                for tag, count in frame_tags.items():
-                    all_tags[tag] = max(all_tags.get(tag, 0), int(count))
+            frame_tags = call_gcp(frame, f"frame_{i}.jpg")
+            for tag, count in frame_tags.items():
+                all_tags[tag] = max(all_tags.get(tag, 0), int(count))
     else:
-        files = {"file": (file_name, file_content)}
-        gcp_response = requests.post(GCP_ML_FUNCTION_URL, files=files, timeout=30)
-        if gcp_response.status_code == 200:
-            all_tags = gcp_response.json().get("tags", {})
+        all_tags = call_gcp(file_content, file_name)
 
     return all_tags
 
@@ -200,8 +270,7 @@ def query_by_uploaded_file(file_content, file_name):
             })
 
         # Find matching files in DB
-        response = table.scan()
-        items = response.get("Items", [])
+        items = scan_all()
 
         matching = []
         for item in items:
@@ -226,11 +295,21 @@ def query_by_uploaded_file(file_content, file_name):
 #   "tags": ["koala", "wombat"],
 #   "operation": 1  (1=add, 0=remove)
 # }
-def bulk_tag_edit(urls, tags, operation):
+def bulk_tag_edit(urls, tags, operation, user_id):
     try:
         results = []
 
-        for file_url in urls:
+        for raw_url in urls:
+            # Normalize https:// presigned URLs to s3:// format
+            file_url = raw_url
+            if file_url.startswith("https://"):
+                # Remove query params
+                file_url = file_url.split("?")[0]
+                bucket = S3_BUCKET_NAME
+                if f"{bucket}.s3.amazonaws.com" in file_url:
+                    key = file_url.split(f"{bucket}.s3.amazonaws.com/")[-1]
+                    file_url = f"s3://{bucket}/{key}"
+
             # Use file-url-index for efficient lookup
             response = table.query(
                 IndexName="file-url-index",
@@ -245,12 +324,17 @@ def bulk_tag_edit(urls, tags, operation):
             item = items[0]
             file_id = item["file_id"]
             current_tags = item.get("tags", {})
+            owner_id = item.get("user_id")
+            allow_editing = item.get("allow_tag_editing", False)
+
+            if owner_id != user_id and not allow_editing:
+                results.append({"url": file_url, "status": "unauthorized"})
+                continue
 
             if operation == 1:
                 # ADD tags
                 for tag in tags:
-                    if tag not in current_tags:
-                        current_tags[tag] = 1
+                    current_tags[tag] = current_tags.get(tag, 0) + 1
             elif operation == 0:
                 # REMOVE tags - ignore if not present (as per spec)
                 for tag in tags:
@@ -275,11 +359,40 @@ def bulk_tag_edit(urls, tags, operation):
     except Exception as e:
         return error_response(str(e), 500)
 
+def set_tag_sharing(urls, allow, user_id):
+    try:
+        results = []
+        for file_url in urls:
+            response = table.query(
+                IndexName="file-url-index",
+                KeyConditionExpression=Key("file_url").eq(file_url)
+            )
+            items = response.get("Items", [])
+            if not items:
+                results.append({"url": file_url, "status": "not_found"})
+                continue
+            item = items[0]
+            if item.get("user_id") != user_id:
+                results.append({"url": file_url, "status": "unauthorized"})
+                continue
+
+            table.update_item(
+                Key={"file_id": item["file_id"]},
+                UpdateExpression="SET allow_tag_editing = :a",
+                ExpressionAttributeValues={":a": allow}
+            )
+            results.append({"url": file_url, "status": "success"})
+        return success_response({"results": results})
+    except Exception as e:
+        return error_response(str(e), 500)
+
 # MAIN LAMBDA HANDLER
 def lambda_handler(event, context):
     # Handle CORS preflight
     if event.get("httpMethod") == "OPTIONS":
         return success_response({})
+
+    user_id, _ = _get_claims(event)
 
     try:
         path = event.get("path", "")
@@ -298,7 +411,13 @@ def lambda_handler(event, context):
             urls = body.get("urls", [])
             tags = body.get("tags", [])
             operation = body.get("operation", 1)
-            result = bulk_tag_edit(urls, tags, operation)
+            result = bulk_tag_edit(urls, tags, operation, user_id)
+
+        elif path == "/tags/sharing":
+            urls = body.get("urls", [])
+            allow = body.get("allow", False)
+            result = set_tag_sharing(urls, allow, user_id)
+
 
         elif path == "/query/tags":
             # Query Type 1: Tags with minimum counts
@@ -323,11 +442,15 @@ def lambda_handler(event, context):
 
         elif path == "/query/file":
             # Query Type 4: Uploaded file
-            file_content = event.get("body", b"")
-            if isinstance(file_content, str):
-                file_content = file_content.encode()
-            file_name = event.get("headers", {}).get("file-name", "query_file.jpg")
-            result = query_by_uploaded_file(file_content, file_name)
+            import base64
+            body_dict = json.loads(event.get("body", "{}"))
+            file_b64 = body_dict.get("file_content", "")
+            if not file_b64:
+                result = error_response("No file provided")
+            else:
+                file_content = base64.b64decode(file_b64)
+                file_name = body_dict.get("file_name", "query.jpg")
+                result = query_by_uploaded_file(file_content, file_name)
 
         else:
             result = error_response("Invalid query path")

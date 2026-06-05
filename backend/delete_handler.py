@@ -3,16 +3,16 @@ import boto3
 from urllib.parse import urlparse
 from boto3.dynamodb.conditions import Attr
 
+import os
+
 # CONFIGURATION
-S3_BUCKET_NAME = "aussie-ecolens-bucket-sri"
-DYNAMODB_TABLE_NAME = "wildlife_files"
-AWS_REGION = "us-east-1"
-UPLOADS_FOLDER = "uploads/"
-THUMBNAILS_FOLDER = "thumbnails/"
+BUCKET = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
+TABLE_NAME = os.environ.get('DYNAMODB_TABLE', 'wildlife_files')
+AWS_REGION = os.environ.get('REGION', 'us-east-1')
 
 s3 = boto3.client("s3", region_name=AWS_REGION)
 dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
-table = dynamodb.Table(DYNAMODB_TABLE_NAME)
+table = dynamodb.Table(TABLE_NAME)
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -36,38 +36,19 @@ def error_response(message, status_code=400):
 
 def extract_s3_key(url):
     """Extract S3 key from full S3 URL"""
+    if url.startswith('s3://'):
+        parts = url.replace('s3://', '').split('/', 1)
+        return parts[1] if len(parts) > 1 else ''
     parsed = urlparse(url)
     return parsed.path.lstrip("/")
 
 def delete_from_s3(key):
     try:
-        s3.delete_object(Bucket=S3_BUCKET_NAME, Key=key)
+        s3.delete_object(Bucket=BUCKET, Key=key)
         print(f"Deleted from S3: {key}")
         return True
     except Exception as e:
         print(f"Error deleting from S3: {key} → {str(e)}")
-        return False
-
-def delete_from_dynamodb(file_url):
-    try:
-        response = table.query(
-            IndexName="file-url-index",
-            KeyConditionExpression=boto3.dynamodb.conditions.Key("file_url").eq(file_url)
-        )
-        items = response.get("Items", [])
-
-        if not items:
-            print(f"No DynamoDB record found for: {file_url}")
-            return False
-
-        for item in items:
-            table.delete_item(Key={"file_id": item["file_id"]})
-            print(f"Deleted DynamoDB record: {item['file_id']}")
-
-        return True
-
-    except Exception as e:
-        print(f"Error deleting from DynamoDB: {str(e)}")
         return False
 
 def lambda_handler(event, context):
@@ -81,6 +62,10 @@ def lambda_handler(event, context):
     if event.get("httpMethod") == "OPTIONS":
         return success_response({})
 
+    # Get user from token
+    claims = event.get('requestContext', {}).get('authorizer', {}).get('claims', {})
+    user_id = claims.get('sub', '')
+
     try:
         body = json.loads(event.get("body", "{}"))
         urls = body.get("urls", [])
@@ -90,24 +75,62 @@ def lambda_handler(event, context):
 
         results = []
 
-        for file_url in urls:
+        for raw_url in urls:
+            file_url = raw_url
+            if file_url.startswith("https://"):
+                file_url = file_url.split("?")[0]
+                if f"{BUCKET}.s3.amazonaws.com" in file_url:
+                    key = file_url.split(f"{BUCKET}.s3.amazonaws.com/")[-1]
+                    file_url = f"s3://{BUCKET}/{key}"
+
             result = {"url": file_url, "status": "success", "errors": []}
 
             # Extract S3 key
             s3_key = extract_s3_key(file_url)
+
+            # Check DB first for ownership and thumbnail url
+            response = table.query(
+                IndexName="file-url-index",
+                KeyConditionExpression=boto3.dynamodb.conditions.Key("file_url").eq(file_url)
+            )
+            items = response.get("Items", [])
+
+            if not items:
+                result["errors"].append("Not found")
+                result["status"] = "failed"
+                results.append(result)
+                continue
+
+            item = items[0]
+            if item.get("user_id") != user_id:
+                result["errors"].append("Not authorized")
+                result["status"] = "unauthorized"
+                results.append(result)
+                continue
+
+            thumbnail_url = item.get("thumbnail_url", "")
 
             # Delete original from S3
             if not delete_from_s3(s3_key):
                 result["errors"].append(f"Failed to delete original: {s3_key}")
 
             # Delete thumbnail from S3
-            thumbnail_key = s3_key.replace(UPLOADS_FOLDER, THUMBNAILS_FOLDER)
-            if thumbnail_key != s3_key:
+            if thumbnail_url:
+                thumbnail_key = extract_s3_key(thumbnail_url)
                 if not delete_from_s3(thumbnail_key):
                     result["errors"].append(f"Failed to delete thumbnail: {thumbnail_key}")
 
+            # Delete video frames from S3
+            video_frames = item.get("video_frames", [])
+            for frame_url in video_frames:
+                frame_key = extract_s3_key(frame_url)
+                if not delete_from_s3(frame_key):
+                    result["errors"].append(f"Failed to delete video frame: {frame_key}")
+
             # Delete from DynamoDB
-            if not delete_from_dynamodb(file_url):
+            try:
+                table.delete_item(Key={"file_id": item["file_id"]})
+            except Exception as e:
                 result["errors"].append(f"Failed to delete from DB: {file_url}")
 
             if result["errors"]:

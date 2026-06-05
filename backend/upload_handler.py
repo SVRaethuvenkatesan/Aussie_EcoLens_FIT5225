@@ -1,24 +1,4 @@
-"""
 
-
-Responsibilities - and ONLY these, to stay off the critical path:
-  1. Read the uploaded file from the request.
-  2. Compute an MD5 checksum and reject duplicates (checksum-index).
-  3. Save the original to s3://<bucket>/uploads/...
-  4. Write the BASE DynamoDB record (no thumbnail_url, no tags yet).
-  5. Asynchronously invoke tagging-handler (does NOT wait for the model).
-  6. Return immediately.
-
-NOTE: thumbnail-generator is triggered automatically by the S3 upload event,
-so this function does NOT call it (avoids a double-trigger).
-
-Expected request body (JSON):
-  {
-    "filename":     "koala1.jpg",
-    "content_type": "image/jpeg",
-    "file_base64":  "<base64 of the raw file bytes>"
-  }
-"""
 
 import base64
 import hashlib
@@ -33,7 +13,7 @@ from boto3.dynamodb.conditions import Key
 # ---- Configuration: set these as Lambda environment variables ----
 REGION                = os.environ.get("REGION", "us-east-1")
 BUCKET_NAME           = os.environ.get("BUCKET_NAME", "aussie-ecolens-bucket-sri")
-TABLE_NAME            = os.environ.get("TABLE_NAME", "wildlife_files")
+TABLE_NAME            = os.environ.get("DYNAMODB_TABLE", "wildlife_files")
 CHECKSUM_INDEX        = os.environ.get("CHECKSUM_INDEX", "checksum-index")
 # IMPORTANT: set this to the real name of your tagging-handler Lambda once it exists.
 TAGGING_FUNCTION_NAME = os.environ.get("TAGGING_FUNCTION_NAME", "tagging-handler")
@@ -95,6 +75,10 @@ def _detect_file_type(content_type, filename):
 
 
 def lambda_handler(event, context):
+    # Handle CORS preflight
+    if event.get("httpMethod") == "OPTIONS":
+        return _ok({})
+
     # ---- 1. Parse the request body ----
     try:
         raw = event.get("body") or "{}"
@@ -160,6 +144,7 @@ def lambda_handler(event, context):
         "checksum":      checksum,
         "user_id":       user_id or "unknown",
         "user_email":    user_email or "unknown",
+        "allow_tag_editing": False,
         "uploaded_at":   datetime.now(timezone.utc).isoformat(),
         "original_name": filename,
         "file_size":     len(file_bytes),

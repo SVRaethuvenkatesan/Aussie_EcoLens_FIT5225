@@ -112,8 +112,9 @@ a:hover { color: var(--color-primary-dark); }
 .form-input:focus, .form-select:focus, .form-textarea:focus {
   outline: none;
   border-color: var(--color-primary-light);
-  box-shadow: 0 0 0 3px rgba(64, 145, 108, 0.15);
+  box-shadow: 0 0 0 4px rgba(64, 145, 108, 0.15);
   background-color: var(--color-surface);
+  transform: translateY(-1px);
 }
 
 .form-textarea {
@@ -232,4 +233,10 @@ a:hover { color: var(--color-primary-dark); }
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(20px); }
   to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
 }

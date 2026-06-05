@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "react-oidc-context";
-import { Tags as TagsIcon, PlusCircle, MinusCircle, Trash2, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import { Tags as TagsIcon, PlusCircle, MinusCircle, Trash2, AlertTriangle, CheckCircle, XCircle, Share2, Unlock, Lock } from "lucide-react";
 import { CONFIG } from "../config";
 
 const Tags = () => {
@@ -14,6 +14,10 @@ const Tags = () => {
   const [deleteUrls, setDeleteUrls] = useState('');
   const [deleteMsg, setDeleteMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [shareUrls, setShareUrls] = useState('');
+  const [shareMsg, setShareMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
 
   const getHeaders = () => {
     const token = auth.user?.id_token || auth.user?.access_token;
@@ -41,17 +45,16 @@ const Tags = () => {
         body: JSON.stringify({ urls, tags, operation })
       });
       const result = await response.json();
-      
       if (response.ok) {
-        setTagMsg({ type: 'success', text: operation === 1 ? '✅ Tags successfully added!' : '✅ Tags successfully removed!' });
+        setTagMsg({ type: 'success', text: operation === 1 ? 'Tags successfully added!' : 'Tags successfully removed!' });
         if (operation === 1) {
            setTagUrls(''); setTagNames('');
         }
       } else {
-        setTagMsg({ type: 'error', text: `❌ ${result.error || 'Failed to update tags'}` });
+        setTagMsg({ type: 'error', text: `${result.error || 'Failed to update tags'}` });
       }
     } catch (err: any) {
-      setTagMsg({ type: 'error', text: `❌ Error: ${err.message}` });
+      setTagMsg({ type: 'error', text: `Error: ${err.message}` });
     } finally {
       setIsTagging(false);
     }
@@ -64,7 +67,7 @@ const Tags = () => {
       return;
     }
 
-    if (!window.confirm('⚠️ Are you absolutely sure you want to permanently delete these files? This action cannot be undone.')) {
+    if (!window.confirm('Are you absolutely sure you want to permanently delete these files? This action cannot be undone.')) {
       return;
     }
 
@@ -80,15 +83,46 @@ const Tags = () => {
       const result = await response.json();
       
       if (response.ok) {
-        setDeleteMsg({ type: 'success', text: '✅ Files deleted successfully!' });
+        setDeleteMsg({ type: 'success', text: 'Files deleted successfully!' });
         setDeleteUrls('');
       } else {
-        setDeleteMsg({ type: 'error', text: `❌ ${result.error || 'Failed to delete files'}` });
+        setDeleteMsg({ type: 'error', text: `${result.error || 'Failed to delete files'}` });
       }
     } catch (err: any) {
-      setDeleteMsg({ type: 'error', text: `❌ Error: ${err.message}` });
+      setDeleteMsg({ type: 'error', text: `Error: ${err.message}` });
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const setTagSharing = async (allow: boolean) => {
+    setShareMsg(null);
+    if (!shareUrls.trim()) {
+      setShareMsg({ type: 'error', text: 'Please enter URLs.' });
+      return;
+    }
+
+    const urls = shareUrls.split('\n').map(u => u.trim()).filter(Boolean);
+
+    setIsSharing(true);
+    try {
+      const response = await fetch(`${CONFIG.API_URL}/tags/sharing`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ urls, allow })
+      });
+      const result = await response.json();
+      
+      if (response.ok) {
+        setShareMsg({ type: 'success', text: allow ? 'Editing allowed successfully!' : 'Editing disabled successfully!' });
+        setShareUrls('');
+      } else {
+        setShareMsg({ type: 'error', text: `${result.error || 'Failed to update sharing settings'}` });
+      }
+    } catch (err: any) {
+      setShareMsg({ type: 'error', text: `Error: ${err.message}` });
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -99,7 +133,7 @@ const Tags = () => {
         <h2 style={{ margin: 0 }}>Data Management</h2>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
         
         {/* Manage Tags Card */}
         <div className="card">
@@ -113,7 +147,7 @@ const Tags = () => {
             <label className="form-label">File URLs (One per line)</label>
             <textarea 
               className="form-textarea" 
-              placeholder="s3://bucket/uploads/koala.jpg&#10;s3://bucket/uploads/wombat.jpg"
+              placeholder="https://aussie-ecolens...s3.amazonaws.com/uploads/...&#10;https://aussie-ecolens...s3.amazonaws.com/uploads/..."
               value={tagUrls}
               onChange={(e) => setTagUrls(e.target.value)}
             ></textarea>
@@ -156,6 +190,52 @@ const Tags = () => {
           )}
         </div>
 
+        {/* Share Tags Card */}
+        <div className="card" style={{ borderTop: '4px solid var(--color-success)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <Share2 size={20} color="var(--color-success)" />
+            <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Tag Sharing</h3>
+          </div>
+          <p className="text-sm text-muted mb-6">Allow or revoke permission for others to edit tags on your files.</p>
+
+          <div className="form-group">
+            <label className="form-label">File URLs (One per line)</label>
+            <textarea 
+              className="form-textarea" 
+              placeholder="https://aussie-ecolens...s3.amazonaws.com/uploads/..."
+              value={shareUrls}
+              onChange={(e) => setShareUrls(e.target.value)}
+              style={{ minHeight: '180px' }}
+            ></textarea>
+          </div>
+
+          <div className="flex gap-4 mt-6">
+            <button 
+              className="btn btn-outline w-full" 
+              onClick={() => setTagSharing(true)} 
+              disabled={isSharing}
+              style={{ color: 'var(--color-success)', borderColor: 'var(--color-success)' }}
+            >
+              <Unlock size={18} /> Allow Editing
+            </button>
+            <button 
+              className="btn btn-outline w-full" 
+              onClick={() => setTagSharing(false)} 
+              disabled={isSharing}
+              style={{ color: 'var(--color-warning)', borderColor: 'var(--color-warning)' }}
+            >
+              <Lock size={18} /> Revoke Editing
+            </button>
+          </div>
+
+          {shareMsg && (
+            <div className={`alert alert-${shareMsg.type} mt-4`}>
+              {shareMsg.type === 'error' ? <XCircle size={18} /> : <CheckCircle size={18} />}
+              {shareMsg.text}
+            </div>
+          )}
+        </div>
+
         {/* Delete Files Card */}
         <div className="card" style={{ borderTop: '4px solid var(--color-danger)' }}>
           <div className="flex items-center gap-2 mb-4">
@@ -168,7 +248,7 @@ const Tags = () => {
             <label className="form-label">File URLs to delete (One per line)</label>
             <textarea 
               className="form-textarea" 
-              placeholder="s3://bucket/uploads/old_image.jpg"
+              placeholder="https://aussie-ecolens...s3.amazonaws.com/uploads/..."
               value={deleteUrls}
               onChange={(e) => setDeleteUrls(e.target.value)}
               style={{ minHeight: '180px' }}
