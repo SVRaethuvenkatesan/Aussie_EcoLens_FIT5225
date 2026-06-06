@@ -1,8 +1,6 @@
 import json
 import boto3
 from urllib.parse import urlparse
-from boto3.dynamodb.conditions import Attr
-
 import os
 
 # CONFIGURATION
@@ -40,7 +38,10 @@ def extract_s3_key(url):
         parts = url.replace('s3://', '').split('/', 1)
         return parts[1] if len(parts) > 1 else ''
     parsed = urlparse(url)
-    return parsed.path.lstrip("/")
+    path = parsed.path.lstrip("/")
+    if path.startswith(BUCKET + "/"):
+        return path.replace(BUCKET + "/", "", 1)
+    return path
 
 def delete_from_s3(key):
     try:
@@ -65,6 +66,9 @@ def lambda_handler(event, context):
     # Get user from token
     claims = event.get('requestContext', {}).get('authorizer', {}).get('claims', {})
     user_id = claims.get('sub', '')
+    
+    if not user_id:
+        return error_response("Unauthorized: No valid user_id found in token.", 401)
 
     try:
         body = json.loads(event.get("body", "{}"))
@@ -81,6 +85,9 @@ def lambda_handler(event, context):
                 file_url = file_url.split("?")[0]
                 if f"{BUCKET}.s3.amazonaws.com" in file_url:
                     key = file_url.split(f"{BUCKET}.s3.amazonaws.com/")[-1]
+                    file_url = f"s3://{BUCKET}/{key}"
+                elif f"s3.amazonaws.com/{BUCKET}" in file_url or f"s3-{AWS_REGION}.amazonaws.com/{BUCKET}" in file_url:
+                    key = file_url.split(f"/{BUCKET}/")[-1]
                     file_url = f"s3://{BUCKET}/{key}"
 
             result = {"url": file_url, "status": "success", "errors": []}
@@ -127,14 +134,16 @@ def lambda_handler(event, context):
                 if not delete_from_s3(frame_key):
                     result["errors"].append(f"Failed to delete video frame: {frame_key}")
 
-            # Delete from DynamoDB
-            try:
-                table.delete_item(Key={"file_id": item["file_id"]})
-            except Exception as e:
-                result["errors"].append(f"Failed to delete from DB: {file_url}")
-
-            if result["errors"]:
+            # ONLY delete from DynamoDB if all S3 deletes succeeded
+            if not result["errors"]:
+                try:
+                    table.delete_item(Key={"file_id": item["file_id"]})
+                except Exception as e:
+                    result["errors"].append(f"Failed to delete from DB: {str(e)}")
+                    result["status"] = "partial_failure"
+            else:
                 result["status"] = "partial_failure"
+                result["errors"].append("DB record kept because S3 objects failed to delete.")
 
             results.append(result)
 

@@ -148,7 +148,8 @@ const Upload = () => {
       if (response.status === 409) {
         setStatus({ type: 'error', message: 'Duplicate file! This file has already been uploaded.' });
       } else if (response.ok) {
-        setStatus({ type: 'success', message: 'Upload successful! The file is being processed.' });
+        const processMsg = result.data?.status === 'processing' ? ' The file is being processed.' : '';
+        setStatus({ type: 'success', message: `Upload successful!${processMsg}` });
         setFile(null);
         setPreview(null);
         if (fileInputRef.current) fileInputRef.current.value = '';

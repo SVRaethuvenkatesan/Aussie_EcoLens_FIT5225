@@ -118,14 +118,69 @@ const Search = () => {
     });
   };
 
+  const compressImage = (f: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let { width, height } = img;
+          const MAX_SIZE = 1920;
+          
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(toBase64(f));
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+          resolve(dataUrl.split(',')[1]);
+        };
+        img.onerror = () => resolve(toBase64(f));
+        if (event.target?.result) {
+          img.src = event.target.result as string;
+        } else {
+          reject(new Error("Failed to read file"));
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+  };
+
   const searchByFile = async () => {
     if (!queryFile) {
       setMessage({ type: 'error', text: 'Select a file first' });
       return;
     }
+
+    if (queryFile.type.startsWith('video/') && queryFile.size > 4.5 * 1024 * 1024) {
+      setMessage({ type: 'error', text: 'Video exceeds maximum allowed size of 4.5 MB.' });
+      return;
+    }
+
     try {
       setIsSearching(true);
-      const base64 = await toBase64(queryFile);
+      const base64 = queryFile.type.startsWith('image/')
+        ? await compressImage(queryFile)
+        : await toBase64(queryFile);
+        
       await handleAPI('/query/file', 'POST', {
         file_content: base64,
         file_name: queryFile.name,

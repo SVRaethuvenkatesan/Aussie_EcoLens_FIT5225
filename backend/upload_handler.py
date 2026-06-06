@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -95,6 +96,9 @@ def lambda_handler(event, context):
     if not filename or not file_b64:
         return _err("Both 'filename' and 'file_base64' are required.")
 
+    if len(file_b64) > 8.5 * 1024 * 1024:  # ~6.3MB decoded, stays safely under Lambda 6MB payload limit
+        return _err("File is too large. Maximum size is ~6MB.", status=413)
+
     file_type = _detect_file_type(content_type, filename)
     if file_type is None:
         return _err("Unsupported file type (must be an image or a video).")
@@ -105,7 +109,7 @@ def lambda_handler(event, context):
     except Exception:
         return _err("'file_base64' is not valid base64.")
 
-    checksum = hashlib.md5(file_bytes).hexdigest()
+    checksum = hashlib.sha256(file_bytes).hexdigest()
 
     # ---- 3. Deduplicate via the checksum GSI ----
     dup = table.query(
@@ -119,31 +123,25 @@ def lambda_handler(event, context):
             status=409,
         )
 
-    # ---- 4. Save the original to S3 ----
+    # ---- 4. Sanitize and prepare S3 keys ----
     user_id, user_email = _get_claims(event)
-    file_id  = str(uuid.uuid4())
-    s3_key   = f"{UPLOADS_PREFIX}{file_id}/{filename}"
+    if not user_id:
+        return _err("Unauthorized: You must be logged in to upload files.", status=401)
+
+    file_id = str(uuid.uuid4())
+    safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+    s3_key = f"{UPLOADS_PREFIX}{file_id}/{safe_name}"
     file_url = f"s3://{BUCKET_NAME}/{s3_key}"
 
-    s3.put_object(
-        Bucket=BUCKET_NAME,
-        Key=s3_key,
-        Body=file_bytes,
-        ContentType=content_type or "application/octet-stream",
-    )
-
-    # ---- 5. Write the BASE record ----
-    # tags starts as {} and is filled later by tagging-handler.
-    # thumbnail_url is intentionally OMITTED so the item stays OUT of
-    # thumbnail-index until a real thumbnail exists (a 'sparse' index).
+    # ---- 5. Write the BASE record to DynamoDB FIRST ----
     item = {
         "file_id":       file_id,
         "file_url":      file_url,
         "file_type":     file_type,
         "tags":          {},
         "checksum":      checksum,
-        "user_id":       user_id or "unknown",
-        "user_email":    user_email or "unknown",
+        "user_id":       user_id,
+        "user_email":    user_email,
         "allow_tag_editing": False,
         "uploaded_at":   datetime.now(timezone.utc).isoformat(),
         "original_name": filename,
@@ -155,7 +153,20 @@ def lambda_handler(event, context):
         ConditionExpression="attribute_not_exists(file_id)",  # never clobber
     )
 
-    # ---- 6. Fire tagging-handler asynchronously (do NOT wait for the model) ----
+    # ---- 6. Save the original to S3 AFTER DB write ----
+    try:
+        s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key=s3_key,
+            Body=file_bytes,
+            ContentType=content_type or "application/octet-stream",
+        )
+    except Exception as e:
+        # If S3 fails, delete the DB record to avoid orphans
+        table.delete_item(Key={"file_id": file_id})
+        return _err(f"Failed to upload to S3: {str(e)}", status=500)
+
+    # ---- 7. Fire tagging-handler asynchronously (do NOT wait for the model) ----
     try:
         lam.invoke(
             FunctionName=TAGGING_FUNCTION_NAME,
@@ -168,7 +179,13 @@ def lambda_handler(event, context):
             }).encode("utf-8"),
         )
     except Exception as exc:
-        # The file is already saved, so don't fail the upload; tagging can retry.
         print(f"WARN: could not invoke {TAGGING_FUNCTION_NAME}: {exc}")
+        # Update DB status to failed so client doesn't hang forever
+        table.update_item(
+            Key={"file_id": file_id},
+            UpdateExpression="SET #s = :st",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":st": "failed_tagging_invoke"}
+        )
 
-    return _ok({"file_id": file_id, "file_url": file_url, "file_type": file_type})
+    return _ok({"file_id": file_id, "file_url": file_url, "file_type": file_type, "status": "processing"})

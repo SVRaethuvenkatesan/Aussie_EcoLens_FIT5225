@@ -5,6 +5,9 @@ import os
 import urllib.request
 import base64
 import decimal
+import time
+import hmac
+import hashlib
 from boto3.dynamodb.conditions import Attr, Key
 
 class DecimalEncoder(json.JSONEncoder):
@@ -73,21 +76,21 @@ def get_presigned_url(s3_key, bucket):
     )
 
 def format_result(item):
-    bucket = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
     file_type = item.get("file_type", "").lower()
     is_video = file_type == "video"
     
-    url = get_presigned_url(item.get("file_url"), bucket) if is_video else get_presigned_url(item.get("thumbnail_url"), bucket)
+    file_url_signed = get_presigned_url(item.get("file_url"), S3_BUCKET_NAME)
+    thumb_url_signed = get_presigned_url(item.get("thumbnail_url"), S3_BUCKET_NAME)
     
     video_frames_presigned = []
     if is_video and "video_frames" in item:
         for vf in item["video_frames"]:
-            video_frames_presigned.append(get_presigned_url(vf, bucket))
+            video_frames_presigned.append(get_presigned_url(vf, S3_BUCKET_NAME))
     
     return {
-        "url": url,
-        "file_url": get_presigned_url(item.get("file_url"), bucket),
-        "thumbnail_url": get_presigned_url(item.get("thumbnail_url"), bucket),
+        "url": file_url_signed if is_video else thumb_url_signed,
+        "file_url": file_url_signed,
+        "thumbnail_url": thumb_url_signed,
         "video_frames": video_frames_presigned,
         "file_type": file_type,
         "tags": item.get("tags", {}),
@@ -152,10 +155,21 @@ def query_by_species(species):
 # GET /query/thumbnail?thumbnail_url=https://...
 def query_by_thumbnail_url(thumbnail_url):
     try:
+        # Normalize https:// presigned URLs to s3:// format
+        s3_url = thumbnail_url
+        if s3_url.startswith("https://"):
+            s3_url = s3_url.split("?")[0]
+            if f"{S3_BUCKET_NAME}.s3.amazonaws.com" in s3_url:
+                key = s3_url.split(f"{S3_BUCKET_NAME}.s3.amazonaws.com/")[-1]
+                s3_url = f"s3://{S3_BUCKET_NAME}/{key}"
+            elif f"s3.amazonaws.com/{S3_BUCKET_NAME}" in s3_url or f"s3-{AWS_REGION}.amazonaws.com/{S3_BUCKET_NAME}" in s3_url:
+                key = s3_url.split(f"/{S3_BUCKET_NAME}/")[-1]
+                s3_url = f"s3://{S3_BUCKET_NAME}/{key}"
+                
         # Use thumbnail-index for efficient lookup
         response = table.query(
             IndexName="thumbnail-index",
-            KeyConditionExpression=Key("thumbnail_url").eq(thumbnail_url)
+            KeyConditionExpression=Key("thumbnail_url").eq(s3_url)
         )
         items = response.get("Items", [])
 
@@ -163,10 +177,9 @@ def query_by_thumbnail_url(thumbnail_url):
             return error_response("No file found for this thumbnail URL", 404)
 
         item = items[0]
-        bucket = os.environ.get('BUCKET_NAME', 'aussie-ecolens-bucket-sri')
         return success_response({
-            "file_url": get_presigned_url(item.get("file_url"), bucket),
-            "thumbnail_url": get_presigned_url(item.get("thumbnail_url"), bucket),
+            "file_url": get_presigned_url(item.get("file_url"), S3_BUCKET_NAME),
+            "thumbnail_url": get_presigned_url(item.get("thumbnail_url"), S3_BUCKET_NAME),
             "file_type": item.get("file_type"),
             "tags": item.get("tags", {}),
             "original_name": item.get("original_name", "")
@@ -221,14 +234,11 @@ def detect_tags_from_file(file_content, file_name):
         if not GCP_ML_FUNCTION_URL:
             return {}
             
-        import hmac
-        import hashlib
-        import time
         timestamp = int(time.time())
         token = hmac.new(
             GCP_SECRET_KEY.encode(),
             str(timestamp).encode(),
-            hashlib.sha256
+            digestmod=hashlib.sha256
         ).hexdigest()
         
         try:
@@ -275,7 +285,10 @@ def query_by_uploaded_file(file_content, file_name):
         matching = []
         for item in items:
             item_tags = item.get("tags", {})
-            match = all(tag in item_tags for tag in detected_tags.keys())
+            match = all(
+                int(item_tags.get(tag, 0)) >= int(count)
+                for tag, count in detected_tags.items()
+            )
             if match:
                 matching.append(format_result(item))
 
@@ -321,6 +334,10 @@ def bulk_tag_edit(urls, tags, operation, user_id):
                 results.append({"url": file_url, "status": "not_found"})
                 continue
 
+            if not user_id:
+                results.append({"url": file_url, "status": "unauthorized"})
+                continue
+                
             item = items[0]
             file_id = item["file_id"]
             current_tags = item.get("tags", {})
@@ -421,7 +438,8 @@ def lambda_handler(event, context):
 
         elif path == "/query/tags":
             # Query Type 1: Tags with minimum counts
-            result = query_by_tags(body)
+            valid_body = {k: v for k, v in body.items() if isinstance(v, (int, float, str)) and str(v).isdigit()}
+            result = query_by_tags(valid_body)
 
         elif path == "/query/species":
             # Query Type 2: Species
@@ -442,14 +460,12 @@ def lambda_handler(event, context):
 
         elif path == "/query/file":
             # Query Type 4: Uploaded file
-            import base64
-            body_dict = json.loads(event.get("body", "{}"))
-            file_b64 = body_dict.get("file_content", "")
+            file_b64 = body.get("file_content", "")
             if not file_b64:
                 result = error_response("No file provided")
             else:
                 file_content = base64.b64decode(file_b64)
-                file_name = body_dict.get("file_name", "query.jpg")
+                file_name = body.get("file_name", "query.jpg")
                 result = query_by_uploaded_file(file_content, file_name)
 
         else:
