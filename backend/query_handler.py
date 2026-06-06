@@ -379,7 +379,15 @@ def bulk_tag_edit(urls, tags, operation, user_id):
 def set_tag_sharing(urls, allow, user_id):
     try:
         results = []
-        for file_url in urls:
+        for raw_url in urls:
+            file_url = raw_url
+            if file_url.startswith("https://"):
+                file_url = file_url.split("?")[0]
+                bucket = S3_BUCKET_NAME
+                if f"{bucket}.s3.amazonaws.com" in file_url:
+                    key = file_url.split(f"{bucket}.s3.amazonaws.com/")[-1]
+                    file_url = f"s3://{bucket}/{key}"
+
             response = table.query(
                 IndexName="file-url-index",
                 KeyConditionExpression=Key("file_url").eq(file_url)
@@ -405,6 +413,7 @@ def set_tag_sharing(urls, allow, user_id):
 
 # MAIN LAMBDA HANDLER
 def lambda_handler(event, context):
+    print(f"EVENT: {json.dumps(event)}")
     # Handle CORS preflight
     if event.get("httpMethod") == "OPTIONS":
         return success_response({})

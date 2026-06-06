@@ -6,8 +6,22 @@ import Search from "./components/Search";
 import Tags from "./components/Tags";
 import Alerts from "./components/Alerts";
 import { Leaf, LogIn } from "lucide-react";
+import { CONFIG } from "./config";
 function App() {
   const auth = useAuth();
+
+  const handleSignUp = async () => {
+    try {
+      // Create a proper OIDC request to generate state and PKCE verifier
+      const request = await auth.userManager.createSigninRequest();
+      // AWS Cognito Hosted UI uses /signup for the registration page
+      const signupUrl = request.url.replace('/oauth2/authorize', '/signup');
+      window.location.href = signupUrl;
+    } catch (err) {
+      console.error("Failed to generate signup URL", err);
+      window.location.href = CONFIG.getSignupUrl(window.location.origin);
+    }
+  };
 
   if (auth.isLoading) {
     return (
@@ -64,7 +78,7 @@ function App() {
             </button>
             <button 
               className="btn btn-outline w-full justify-center"
-              onClick={() => void auth.signinRedirect()}
+              onClick={() => void handleSignUp()}
               style={{ padding: '1rem' }}
             >
               Create Account

@@ -114,8 +114,14 @@ const Tags = () => {
       const result = await response.json();
       
       if (response.ok) {
-        setShareMsg({ type: 'success', text: allow ? 'Editing allowed successfully!' : 'Editing disabled successfully!' });
-        setShareUrls('');
+        const failed = result.data?.results?.filter((r: any) => r.status !== 'success');
+        if (failed && failed.length > 0) {
+          const reason = failed[0].status === 'not_found' ? 'File not found in database.' : 'Unauthorized.';
+          setShareMsg({ type: 'error', text: `Failed to update some files: ${reason}` });
+        } else {
+          setShareMsg({ type: 'success', text: allow ? 'Editing allowed successfully!' : 'Editing disabled successfully!' });
+          setShareUrls('');
+        }
       } else {
         setShareMsg({ type: 'error', text: `${result.error || 'Failed to update sharing settings'}` });
       }

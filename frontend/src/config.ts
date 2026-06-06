@@ -10,11 +10,15 @@ export const CONFIG = {
 
   // Auth URLs
   getLoginUrl: (origin: string) =>
-    `https://us-east-1yig3u62sm.auth.us-east-1.amazoncognito.com/login?client_id=3d4m3g86gj50c2erc4vts7aig4&response_type=token&scope=email+openid+profile&redirect_uri=${encodeURIComponent(
-      origin + "/"
+    `https://${CONFIG.DOMAIN}/login?client_id=${CONFIG.CLIENT_ID}&response_type=code&scope=email+openid+profile&redirect_uri=${encodeURIComponent(
+      origin
+    )}`,
+  getSignupUrl: (origin: string) =>
+    `https://${CONFIG.DOMAIN}/signup?client_id=${CONFIG.CLIENT_ID}&response_type=code&scope=email+openid+profile&redirect_uri=${encodeURIComponent(
+      origin
     )}`,
   getLogoutUrl: (origin: string) =>
-    `https://us-east-1yig3u62sm.auth.us-east-1.amazoncognito.com/logout?client_id=3d4m3g86gj50c2erc4vts7aig4&logout_uri=${encodeURIComponent(
+    `https://${CONFIG.DOMAIN}/logout?client_id=${CONFIG.CLIENT_ID}&logout_uri=${encodeURIComponent(
       origin
     )}`,
 };
