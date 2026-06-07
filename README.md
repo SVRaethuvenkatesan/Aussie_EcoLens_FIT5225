@@ -1,8 +1,8 @@
-# Aussie EcoLens 🦘🌿
+# Aussie EcoLens 
 
 **Aussie EcoLens** is a full-stack Wildlife Observation Platform built for automated species detection and tagging. Users can upload images or videos of Australian wildlife, and the system uses machine learning to automatically analyze, tag, and securely store the media.
 
-## 📂 Project Structure
+## Project Structure
 
 This repository is organized into distinct components:
 
@@ -11,7 +11,7 @@ This repository is organized into distinct components:
 - **`test_images/`**: A curated set of sample images (Koalas, Kangaroos, etc.) used for testing the ML detection capabilities.
 - **`sample_wildlife_video.mp4`**: A test video file for verifying multimedia upload processing.
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 - Node.js (v16+)
@@ -38,10 +38,10 @@ The backend consists of AWS Lambda functions written in Python. They integrate w
 1. Install requirements: `pip install -r backend/requirements.txt`
 2. Deploy the functions in the `backend/` folder directly to AWS Lambda. Ensure the respective environment variables (`BUCKET_NAME`, `DYNAMODB_TABLE`, `GCP_FUNCTION_URL`) are set in your AWS Console.
 
-## 🛠️ Tech Stack
+## Tech Stack
 - **Frontend**: React, TypeScript, Vite, CSS Modules (Custom Premium Styling), Lucide React
 - **Backend / Cloud**: AWS Lambda (Python), API Gateway, S3, DynamoDB, AWS Cognito
 - **Machine Learning**: Google Cloud Platform (GCP) Cloud Functions
 
-## 📝 License
+## license
 Created for FIT5225 - Monash University.
