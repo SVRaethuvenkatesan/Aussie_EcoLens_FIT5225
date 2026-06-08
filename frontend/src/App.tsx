@@ -5,6 +5,7 @@ import Upload from "./components/Upload";
 import Search from "./components/Search";
 import Tags from "./components/Tags";
 import Alerts from "./components/Alerts";
+import Gallery from "./components/Gallery";
 import { Leaf, LogIn } from "lucide-react";
 import { CONFIG } from "./config";
 function App() {
@@ -95,6 +96,7 @@ function App() {
       <Route path="/" element={<Layout />}>
         <Route index element={<Navigate to="/upload" replace />} />
         <Route path="upload" element={<Upload />} />
+        <Route path="gallery" element={<Gallery />} />
         <Route path="search" element={<Search />} />
         <Route path="tags" element={<Tags />} />
         <Route path="alerts" element={<Alerts />} />

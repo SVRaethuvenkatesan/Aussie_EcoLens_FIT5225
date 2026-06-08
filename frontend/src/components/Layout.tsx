@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "react-oidc-context";
-import { Leaf, UploadCloud, Search, Tags, Bell, LogOut, User } from "lucide-react";
+import { Leaf, UploadCloud, Search, Tags, Bell, LogOut, User, Image as ImageIcon } from "lucide-react";
 import { CONFIG } from "../config";
 
 const Layout = () => {
@@ -11,6 +11,7 @@ const Layout = () => {
 
   const navItems = [
     { to: "/upload", icon: <UploadCloud size={18} />, label: "Upload" },
+    { to: "/gallery", icon: <ImageIcon size={18} />, label: "My Uploads" },
     { to: "/search", icon: <Search size={18} />, label: "Search" },
     { to: "/tags", icon: <Tags size={18} />, label: "Tags" },
     { to: "/alerts", icon: <Bell size={18} />, label: "Alerts" },

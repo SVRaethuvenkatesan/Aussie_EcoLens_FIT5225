@@ -8,6 +8,7 @@ const Upload = () => {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info', message: string } | null>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   
@@ -22,6 +23,7 @@ const Upload = () => {
   const processFile = (selectedFile: File) => {
     setFile(selectedFile);
     setStatus(null);
+    setThumbnailUrl(null);
     
     // Create preview
     const url = URL.createObjectURL(selectedFile);
@@ -51,84 +53,90 @@ const Upload = () => {
     }
   };
 
-  const toBase64 = (f: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          // Extract just the base64 part, dropping the data URL prefix
-          resolve(reader.result.split(',')[1]);
+  const computeDHash = (f: File): Promise<string> => {
+    if (f.type.startsWith('video/')) return Promise.resolve("");
+    
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 9;
+        canvas.height = 8;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve("");
+        
+        // Fill white background to normalize transparent PNGs vs opaque JPGs
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 9, 8);
+        ctx.drawImage(img, 0, 0, 9, 8);
+        const imgData = ctx.getImageData(0, 0, 9, 8).data;
+        
+        const grays = [];
+        for (let i = 0; i < imgData.length; i += 4) {
+          const r = imgData[i];
+          const g = imgData[i+1];
+          const b = imgData[i+2];
+          const rawGray = r * 0.299 + g * 0.587 + b * 0.114;
+          // Heavily quantize the grayscale value to eliminate JPG compression noise.
+          // This guarantees that the exact same image in JPG and PNG produces the EXACT same hash.
+          grays.push(Math.round(rawGray / 32) * 32);
         }
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(f);
-    });
-  };
-
-  const compressImage = (f: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let { width, height } = img;
-          const MAX_SIZE = 1920;
-          
-          if (width > height) {
-            if (width > MAX_SIZE) {
-              height *= MAX_SIZE / width;
-              width = MAX_SIZE;
-            }
-          } else {
-            if (height > MAX_SIZE) {
-              width *= MAX_SIZE / height;
-              height = MAX_SIZE;
-            }
+        
+        const diff = [];
+        for (let row = 0; row < 8; row++) {
+          for (let col = 0; col < 8; col++) {
+            const left = grays[row * 9 + col];
+            const right = grays[row * 9 + col + 1];
+            diff.push(left > right);
           }
-          
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(toBase64(f));
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-          resolve(dataUrl.split(',')[1]);
-        };
-        img.onerror = () => resolve(toBase64(f));
-        if (event.target?.result) {
-          img.src = event.target.result as string;
-        } else {
-          reject(new Error("Failed to read file"));
         }
+        
+        let decimalValue = 0n;
+        for (let i = 0; i < diff.length; i++) {
+          if (diff[i]) {
+            decimalValue += (1n << BigInt(i));
+          }
+        }
+        
+        resolve(decimalValue.toString(16).padStart(16, '0'));
       };
-      reader.onerror = reject;
-      reader.readAsDataURL(f);
+      img.onerror = () => resolve("");
+      img.src = url;
     });
   };
 
   const handleUpload = async () => {
     if (!file) return;
 
-    if (file.type.startsWith('video/') && file.size > 4.5 * 1024 * 1024) {
-      setStatus({ type: 'error', message: 'Video exceeds maximum allowed size of 4.5 MB.' });
+    if (file.size === 0) {
+      setStatus({ type: 'error', message: 'File is empty or corrupt. Cannot upload 0-byte file.' });
+      return;
+    }
+
+    if (file.type.startsWith('video/') && file.size > 5 * 1024 * 1024 * 1024) {
+      setStatus({ type: 'error', message: 'Video exceeds absolute maximum size of 5 GB.' });
       return;
     }
 
     setIsUploading(true);
-    setStatus({ type: 'info', message: 'Uploading file to cloud storage...' });
+    setStatus({ type: 'info', message: 'Initializing secure direct upload...' });
 
     try {
-      const base64 = file.type.startsWith('image/') 
-        ? await compressImage(file) 
-        : await toBase64(file);
-
       const token = auth.user?.id_token || auth.user?.access_token;
+      
+      let clientHash = "";
+      if (file.type.startsWith('image/')) {
+        setStatus({ type: 'info', message: 'Analyzing visual signature to prevent duplicates...' });
+        clientHash = await computeDHash(file);
+        if (!clientHash) {
+          setStatus({ type: 'error', message: 'File is corrupt or in an unsupported format. Cannot read image data.' });
+          setIsUploading(false);
+          return;
+        }
+      }
 
+      // 1. Get Presigned URL
       const response = await fetch(`${CONFIG.API_URL}/upload`, {
         method: 'POST',
         headers: {
@@ -136,26 +144,49 @@ const Upload = () => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          file_base64: base64,
           filename: file.name,
           content_type: file.type,
-          file_size: file.size
+          file_size: file.size,
+          client_hash: clientHash
         })
       });
 
       const result = await response.json();
 
-      if (response.status === 409) {
-        setStatus({ type: 'error', message: 'Duplicate file! This file has already been uploaded.' });
-      } else if (response.ok) {
-        const processMsg = result.data?.status === 'processing' ? ' The file is being processed.' : '';
-        setStatus({ type: 'success', message: `Upload successful!${processMsg}` });
-        setFile(null);
-        setPreview(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      } else {
-        setStatus({ type: 'error', message: `Upload failed: ${result.error || 'Unknown error'}` });
+      if (!response.ok) {
+        if (response.status === 409) {
+          setStatus({ type: 'error', message: 'Duplicate file! This file has already been uploaded.' });
+        } else if (response.status === 413) {
+          setStatus({ type: 'error', message: 'File is too large.' });
+        } else {
+          setStatus({ type: 'error', message: `Upload initialization failed: ${result.error || 'Unknown error'}` });
+        }
+        return;
       }
+
+      const { upload_url, thumbnail_url } = result.data;
+
+      // 2. Upload direct to S3
+      setStatus({ type: 'info', message: 'Uploading directly to secure storage...' });
+      const s3Response = await fetch(upload_url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+
+      if (!s3Response.ok) {
+        setStatus({ type: 'error', message: 'Failed to upload the file directly to S3.' });
+        return;
+      }
+
+      setStatus({ type: 'success', message: 'Upload successful! The file is being processed.' });
+      setThumbnailUrl(thumbnail_url || null);
+      setFile(null);
+      setPreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+
     } catch (err: any) {
       setStatus({ type: 'error', message: `Error: ${err.message}` });
     } finally {
@@ -185,6 +216,31 @@ const Upload = () => {
           </div>
         )}
 
+        {thumbnailUrl && (
+          <div className="card mt-4 mb-6" style={{ background: 'var(--color-bg)' }}>
+            <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Thumbnail URL</h3>
+            <div className="flex items-center gap-2">
+              <input 
+                type="text" 
+                readOnly 
+                value={thumbnailUrl} 
+                className="form-control" 
+                style={{ flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}
+              />
+              <button 
+                className="btn btn-outline" 
+                onClick={() => {
+                  navigator.clipboard.writeText(thumbnailUrl);
+                  alert('Copied to clipboard!');
+                }}
+              >
+                Copy URL
+              </button>
+            </div>
+            <p className="text-muted text-sm mt-2">This is a presigned URL that expires in 1 hour.</p>
+          </div>
+        )}
+
         {/* Drag & Drop Zone */}
         {!file && (
           <div 
@@ -206,7 +262,7 @@ const Upload = () => {
               <UploadCloud size={48} />
             </div>
             <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Click or drag file to this area to upload</h3>
-            <p className="text-muted text-sm">Supports: JPG, PNG, MP4, MOV (Max 10MB recommended)</p>
+            <p className="text-muted text-sm">Supports: JPG, PNG, MP4, MOV (Max 5GB supported)</p>
           </div>
         )}
 

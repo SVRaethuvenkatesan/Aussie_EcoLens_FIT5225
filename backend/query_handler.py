@@ -301,6 +301,23 @@ def query_by_uploaded_file(file_content, file_name):
     except Exception as e:
         return error_response(str(e), 500)
 
+def query_my_uploads(user_id):
+    try:
+        items = scan_all()
+        
+        matching = []
+        for item in items:
+            if item.get("user_id") == user_id:
+                matching.append(format_result(item))
+
+        # Sort by uploaded_at descending
+        matching.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+
+        return success_response({"results": matching, "count": len(matching)})
+
+    except Exception as e:
+        return error_response(str(e), 500)
+
 # QUERY TYPE 5: Bulk tag add/remove
 # POST /tags/manage
 # {
@@ -432,7 +449,13 @@ def lambda_handler(event, context):
                 body = {}
 
         # Route to correct query type
-        if path == "/tags/manage":
+        if path == "/query/my_uploads":
+            if not user_id:
+                result = error_response("Unauthorized", 401)
+            else:
+                result = query_my_uploads(user_id)
+
+        elif path == "/tags/manage":
             # Query Type 5: Bulk tag edit
             urls = body.get("urls", [])
             tags = body.get("tags", [])
@@ -446,9 +469,15 @@ def lambda_handler(event, context):
 
 
         elif path == "/query/tags":
-            # Query Type 1: Tags with minimum counts
-            valid_body = {k: v for k, v in body.items() if isinstance(v, (int, float, str)) and str(v).isdigit()}
-            result = query_by_tags(valid_body)
+            if body.get("action") == "my_uploads":
+                if not user_id:
+                    result = error_response("Unauthorized", 401)
+                else:
+                    result = query_my_uploads(user_id)
+            else:
+                # Query Type 1: Tags with minimum counts
+                valid_body = {k: v for k, v in body.items() if isinstance(v, (int, float, str)) and str(v).isdigit()}
+                result = query_by_tags(valid_body)
 
         elif path == "/query/species":
             # Query Type 2: Species
