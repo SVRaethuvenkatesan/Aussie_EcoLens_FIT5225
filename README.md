@@ -1,47 +1,83 @@
-# Aussie EcoLens 
+# 🦘 Aussie EcoLens
 
-**Aussie EcoLens** is a full-stack Wildlife Observation Platform built for automated species detection and tagging. Users can upload images or videos of Australian wildlife, and the system uses machine learning to automatically analyze, tag, and securely store the media.
+A multi-cloud, serverless wildlife observation platform built for automated species detection and tagging. Users upload images or video of Australian wildlife, and the system uses machine learning to analyze, tag, and securely store the media.
+
+Built for **FIT5225 – Cloud Computing, Monash University**.
+
+## Overview
+
+Aussie EcoLens combines a modern React front end with a serverless AWS backend and a GCP-hosted ML classifier, demonstrating a full multi-cloud architecture: upload → store → classify → query.
+
+## Features
+
+- Automated species detection & tagging via a GCP Cloud Function ML model
+- Secure upload/query/delete through a serverless REST API
+- AWS Cognito authentication
+- Client-side image compression before upload
+- Automatic thumbnail generation and notifications
+- Responsive, glassmorphic web UI
+
+## Architecture
+
+| Layer | Technology |
+|---|---|
+| Frontend | React, TypeScript, Vite, CSS Modules |
+| API | AWS API Gateway + 6 AWS Lambda functions (Python) |
+| Storage | AWS S3 (media), DynamoDB (metadata) |
+| Auth | AWS Cognito |
+| ML Classification | GCP Cloud Function |
+
+**Lambda functions:** Upload · Query · Delete · Tagging · Notifications · Thumbnail Generation
 
 ## Project Structure
 
-This repository is organized into distinct components:
+```
+Aussie_EcoLens_FIT5225/
+├── frontend/      # React + Vite + TypeScript UI
+├── backend/       # AWS Lambda functions (Python)
+├── gcp/           # GCP Cloud Function (ML species classifier)
+├── test_images/   # Sample wildlife images/video for testing
+└── .gitignore
+```
 
-- **`frontend/`**: The user interface, built with React, Vite, and TypeScript. Features a premium glassmorphic UI, responsive layouts, client-side image compression, and AWS Cognito authentication.
-- **`backend/`**: Contains the 6 essential AWS Lambda functions that power the serverless backend API (Upload, Query, Delete, Tagging, Notifications, and Thumbnail Generation).
-- **`test_images/`**: A curated set of sample images (Koalas, Kangaroos, etc.) used for testing the ML detection capabilities.
-- **`sample_wildlife_video.mp4`**: A test video file for verifying multimedia upload processing.
-
-##  Getting Started
+## Getting Started
 
 ### Prerequisites
-- Node.js (v16+)
-- AWS CLI configured with your credentials
-- Python 3.9+ (for backend local testing)
 
-### Running the Frontend
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-4. Open your browser to the URL provided (usually `http://localhost:5173`).
+- Node.js v16+
+- AWS CLI configured with valid credentials
+- Python 3.9+ (for local backend testing)
 
-### Backend Deployment
-The backend consists of AWS Lambda functions written in Python. They integrate with AWS S3 for media storage, DynamoDB for metadata, and a GCP Cloud Function for the ML classification model.
-1. Install requirements: `pip install -r backend/requirements.txt`
-2. Deploy the functions in the `backend/` folder directly to AWS Lambda. Ensure the respective environment variables (`BUCKET_NAME`, `DYNAMODB_TABLE`, `GCP_FUNCTION_URL`) are set in your AWS Console.
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the URL shown in your terminal (typically `http://localhost:5173`).
+
+### Backend
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+Deploy each function in `backend/` to AWS Lambda, and set the following environment variables in the AWS Console:
+
+| Variable | Purpose |
+|---|---|
+| `BUCKET_NAME` | S3 bucket for media storage |
+| `DYNAMODB_TABLE` | DynamoDB table for metadata |
+| `GCP_FUNCTION_URL` | Endpoint of the GCP ML classification function |
 
 ## Tech Stack
-- **Frontend**: React, TypeScript, Vite, CSS Modules (Custom Premium Styling), Lucide React
-- **Backend / Cloud**: AWS Lambda (Python), API Gateway, S3, DynamoDB, AWS Cognito
-- **Machine Learning**: Google Cloud Platform (GCP) Cloud Functions
 
-## license
-Created for FIT5225 - Monash University.
+**Frontend:** React · TypeScript · Vite · CSS Modules · Lucide React
+**Backend / Cloud:** AWS Lambda (Python) · API Gateway · S3 · DynamoDB · Cognito
+**Machine Learning:** Google Cloud Platform (GCP) Cloud Functions
+
+## Author
+
+**Sri Vishnu Ram Aethu Venkatesan** — [LinkedIn](https://www.linkedin.com/in/sri-vishnu-ram-aethu-venkatesan-3028a532a)
