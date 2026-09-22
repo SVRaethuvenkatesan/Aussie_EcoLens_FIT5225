@@ -1,4 +1,4 @@
-# 🦘 Aussie EcoLens
+#  Aussie EcoLens
 
 A multi-cloud, serverless wildlife observation platform built for automated species detection and tagging. Users upload images or video of Australian wildlife, and the system uses machine learning to analyze, tag, and securely store the media.
 
